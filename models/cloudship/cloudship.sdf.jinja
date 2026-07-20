@@ -15,6 +15,14 @@
 {%- set fin_root_chord = 0.465 -%}
 {%- set fin_thickness = 0.01 -%}
 {%- set fin_span = 0.39 -%}
+{# flap geometry — trailing 40% of chord becomes a revolute joint #}
+{%- set flap_chord_frac = 0.4 -%}           {# fraction of fin chord that moves #}
+{%- set flap_chord  = fin_root_chord * flap_chord_frac -%}   {# 0.186 m #}
+{%- set root_chord  = fin_root_chord * (1.0 - flap_chord_frac) -%} {# 0.279 m #}
+{%- set flap_mass   = 0.001 -%}  {# near-zero: prevents CoG shift aft and Munk pitch instability.
+                                    Real aerodynamic mass of ~22 g per flap is irrelevant in Gazebo
+                                    (no finliftdrag plugin — flap deflection is kinematic-only). #}
+{%- set n_flaps     = 4 -%}
 
 {# center of volume as measured from the nose #}
 {%- set hull_cov = 2.22 -%}
@@ -53,8 +61,11 @@
 {%- set rud_prop_h = 0.02 -%}
 
 {# masses #}
-{# hull mass #}
-{%- set hull_mass = 2.453 -%}  {# under-buoyant: buoy_ratio≈0.95 (total≈7.70 kg, buoyancy≈7.31 kg) #}
+{# hull mass — adjusted so buoy_ratio=0.95. With flap_mass=0.001 (near-zero),
+   hull_mass absorbs the buoyancy compensation that previously belonged to the
+   heavy 0.022 kg flaps, restoring CoG to +22 mm fwd of CoV (px4_mod_mixer level).
+   Formula: hull_mass = buoyancy/0.95 - (gas+gondola+4*fin+4*flap+payload) #}
+{%- set hull_mass = 2.079 -%}  {# buoy_ratio=0.95: total=7.698 kg, hull_link=7.694 kg + 4×0.001 kg flaps, net-down≈3.8 N #}
 {# hull volume #}
 {%- set hull_volume = 5.97 -%}
 {# gondola mass #}
@@ -121,8 +132,12 @@
 {# gas mass #}
 {%- set gas_mass = gas_density*hull_volume -%}
 
-{# total mass #}
-{%- set total_mass = hull_mass + gas_mass + gondola_mass + 4*fin_mass + pl_mass -%}
+{# total mass (all links combined — used for buoyancy/ratio checks only) #}
+{%- set total_mass = hull_mass + gas_mass + gondola_mass + 4*fin_mass + n_flaps*flap_mass + pl_mass -%}
+{# hull_link mass: hull_link owns everything EXCEPT the flap_links (which have their own <inertial>).
+   Using total_mass here would double-count flap mass → 0.086 N extra net-down + CoG aft shift.
+   hull_link_mass = total_mass - n_flaps*flap_mass = 7.694 kg; compound total = 7.694+4×0.001 = 7.698 kg ✓ #}
+{%- set hull_link_mass = total_mass - n_flaps * flap_mass -%}
 
 {# distances (calculate from hull ellipsoid geometry) #}
 {# gondola center #}
@@ -135,10 +150,11 @@
 {%- set r_fin_x = hull_cov - (d_fin_x_s + fin_root_chord/2) -%}
 {%- set r_fin_center_rad = r_fin_rad + fin_span/2 -%}
 
-{# center of gravity coordinate #}
-{%- set r_g_x = (gondola_mass*r_gon_x + 4*fin_mass*r_fin_x + pl_mass*r_pl_x)/total_mass -%}
+{# center of gravity for the hull_link (excludes flap_links — they have separate <inertial> blocks).
+   Denominator must be hull_link_mass (not total_mass) since flap masses are in separate links. #}
+{%- set r_g_x = (gondola_mass*r_gon_x + 4*fin_mass*r_fin_x + pl_mass*r_pl_x)/hull_link_mass -%}
 {%- set r_g_y = 0 -%}
-{%- set r_g_z = (gondola_mass*r_gon_z + pl_mass*r_pl_z)/total_mass -%}
+{%- set r_g_z = (gondola_mass*r_gon_z + pl_mass*r_pl_z)/hull_link_mass -%}
 
 {# moment of inertia #}
 {# hull #}
@@ -178,6 +194,24 @@
 {%- set mot_coeff = (mot_max_thrust_kg * 9.81)/(mot_max_vel**2) -%}
 {# thruster motor constant #}
 {%- set rud_coeff = (rud_max_thrust_kg * 9.81)/(rud_max_vel**2) -%}
+
+{# ---------------------------------------------------------------- #}
+{# fin_bottom flap alignment offsets                                  #}
+{# fin_prop.stl uses the full chord (fin_root_chord) unlike the       #}
+{# standard fin macro which only renders root_chord (60%).            #}
+{# These offsets correct for that difference when placing the flap.   #}
+{# ---------------------------------------------------------------- #}
+{# X: shift hinge to root chord box TE (= where leading 60% ends and flap begins). #}
+{#    std_hinge  = r_fin_x - root_chord (inside fin body)                           #}
+{#    root_box_TE = r_fin_x - flap_chord - root_chord = r_fin_x - fin_root_chord    #}
+{#    offset = root_box_TE - std_hinge = -flap_chord = -0.186 m                     #}
+{#    Same formula applies for fin_prop.stl mesh (mesh TE is also at root_box_TE).  #}
+{#    With this offset, flap extends completely aft of the fin body (≈ empirical -0.2 m confirmed in Gazebo). #}
+{%- set fin_bottom_flap_x_corr = -flap_chord -%}  {# = -0.186 m #}
+{# Z: shift flap centre from fin/mesh centre (-(r_fin_rad+fin_span/2)) to motor z  #}
+{#    (-r_fin_rad). Exact: z_corr = fin_span/2 = 0.195 m (≈ empirical 0.2 m Gazebo). #}
+{#    Resulting flap Z span: [-r_fin_rad-fin_span/2, -r_fin_rad+fin_span/2]           #}
+{%- set fin_bottom_flap_z_corr = fin_span / 2 -%}  {# = 0.195 m #}
 
 {# ---------------------------------------------------------------- #}
 {# macros #}
@@ -288,15 +322,80 @@
 {%- endmacro -%}
 
 {%- macro fin(name, roll, y, z) -%}
+{# Only the fixed root portion (60% of chord) remains in hull link geometry.
+   Trailing 40% is a separate flap link on a revolute joint — see flap_link macro. #}
 <visual name="{{ name }}_visual">
-  <pose>{{ r_fin_x - fin_root_chord/2 }} {{ y }} {{ z }} {{ roll }} 0 0</pose>
-  {{ box(fin_root_chord, fin_thickness, fin_span * 2) | indent(8) }}
+  <pose>{{ r_fin_x - flap_chord - root_chord/2 }} {{ y }} {{ z }} {{ roll }} 0 0</pose>
+  {{ box(root_chord, fin_thickness, fin_span * 2) | indent(8) }}
 </visual>
 
 <collision name="{{ name }}_collision">
-  <pose>{{ r_fin_x - fin_root_chord/2 }} {{ y }} {{ z }} {{ roll }} 0 0</pose>
-  {{ box(fin_root_chord, fin_thickness, fin_span * 2) | indent(8) }}
+  <pose>{{ r_fin_x - flap_chord - root_chord/2 }} {{ y }} {{ z }} {{ roll }} 0 0</pose>
+  {{ box(root_chord, fin_thickness, fin_span * 2) | indent(8) }}
 </collision>
+{%- endmacro -%}
+
+{#
+  flap_link(name, roll, y, z, axis_xyz, span):
+    Creates a separate child link for the trailing-edge flap and a revolute
+    joint connecting it to hull.  Joint angle = 0 → neutral (flap aligned with root).
+    Limits: ±90° (π/2 rad) — visual-only for now; aero plugin updated separately.
+
+    axis_xyz: spanwise axis direction (in model frame) around which flap deflects.
+      fin_top / fin_bottom : "0 0 1"  (Z-axis, span along Z)
+      fin_port / fin_sb    : "0 1 0"  (Y-axis, span along Y after roll)
+    span: spanwise extent of the flap box (must match the fin's spanwise geometry).
+      fin_top / fin_port / fin_sb : fin_span * 2  (matches fin macro box height)
+      fin_bottom                  : fin_span - rud_prop_r  (stops before motor disc)
+#}
+{%- macro flap_link(name, roll, y, z, axis_xyz, span, x_offset=0) -%}
+{%- set hinge_x = r_fin_x - root_chord -%}
+
+<link name="{{ name }}_flap">
+  {# Pose: link origin placed at the spanwise centre of the flap, at the hinge line.
+     x_offset: additional X shift applied only to fins whose chord geometry differs
+     from the standard fin macro (e.g. fin_bottom with its hollow motor mount). #}
+  <pose>{{ origin_x + hinge_x + x_offset }} {{ origin_y + y }} {{ origin_z + z }} {{ roll }} 0 0</pose>
+  {{ inertial(flap_mass,
+              (1.0/12.0)*flap_mass*(span**2),
+              (1.0/12.0)*flap_mass*(flap_chord**2 + span**2),
+              (1.0/12.0)*flap_mass*(flap_chord**2)) | indent(6) }}
+  <gravity>true</gravity>
+  <self_collide>false</self_collide>
+  <velocity_decay/>
+
+  {# Box centre is at -flap_chord/2 from the hinge (flap extends aft) #}
+  <visual name="{{ name }}_flap_visual">
+    <pose>-{{ flap_chord/2 }} 0 0 0 0 0</pose>
+    {{ box(flap_chord, fin_thickness, span) | indent(8) }}
+  </visual>
+  <collision name="{{ name }}_flap_collision">
+    <pose>-{{ flap_chord/2 }} 0 0 0 0 0</pose>
+    {{ box(flap_chord, fin_thickness, span) | indent(8) }}
+  </collision>
+</link>
+
+<joint name="{{ name }}_flap_joint" type="revolute">
+  <parent>hull</parent>
+  <child>{{ name }}_flap</child>
+  <axis>
+    <xyz>{{ axis_xyz }}</xyz>
+    <limit>
+      <lower>-{{ np.pi / 2 }}</lower>
+      <upper>{{ np.pi / 2 }}</upper>
+    </limit>
+    <dynamics>
+      <damping>0.01</damping>
+      <spring_reference>0</spring_reference>
+      <spring_stiffness>0</spring_stiffness>
+    </dynamics>
+  </axis>
+  <physics>
+    <ode>
+      <implicit_spring_damper>1</implicit_spring_damper>
+    </ode>
+  </physics>
+</joint>
 {%- endmacro -%}
 
 {# ---------------------------------------------------------------- #}
@@ -314,7 +413,7 @@
     {# Airship #}
     <link name="hull">
       <pose>{{ origin_x }} {{ origin_y }} {{ origin_z }} 0 0 0</pose>
-      {{ inertial_offset(total_mass, ixx, iyy, izz, r_g_x, r_g_y, -r_g_z)|indent(6) }}
+      {{ inertial_offset(hull_link_mass, ixx, iyy, izz, r_g_x, r_g_y, -r_g_z)|indent(6) }}
 
       <gravity>true</gravity>
       <self_collide>false</self_collide>
@@ -402,7 +501,7 @@
         {{ cylinder(0.05, 0.1) | indent(8) }}
       </collision>
 
-      {# Fins #}
+      {# Fins — fixed root portion (60% chord) stays in hull link #}
       {{ fin("fin_top", 0, 0, r_fin_rad - fin_span/2) }}
       {{ fin("fin_port", -np.pi / 2, r_fin_rad - fin_span/2, 0) }}
       {{ fin("fin_sb", np.pi / 2, -r_fin_rad + fin_span/2, 0) }}
@@ -431,6 +530,21 @@
         </geometry>
       </collision>
     </link>
+
+    {# Flap links + revolute joints (Phase 2 — trailing 40% of each fin) #}
+    {# axis_xyz: spanwise direction in model frame                          #}
+    {#   fin_top / fin_bottom : Z-axis (span along Z, TE deflects in ±Y)   #}
+    {#   fin_port / fin_sb    : Y-axis (span along Y, TE deflects in ±Z)   #}
+    {# Joint limits: ±90° (visual / mechanical — aero plugin updated separately) #}
+    {# Span-centre z/y for each flap must match the parent fin's box centre:
+       fin_top/port/sb  : box height = fin_span*2, centre = r_fin_rad - fin_span/2
+       fin_bottom       : motor at z=-r_fin_rad; flap centre at -r_fin_rad (motor z).
+       All flaps: x_offset = -flap_chord places hinge at root-chord-box TE so the
+       flap body lies completely aft of the fin (confirmed empirically in Gazebo). #}
+    {{ flap_link("fin_top",    0,             0,                      r_fin_rad - fin_span/2,           "0 0 1", fin_span * 2, -flap_chord) }}
+    {{ flap_link("fin_port",  -np.pi / 2,    r_fin_rad - fin_span/2,  0,                                "0 1 0", fin_span * 2, -flap_chord) }}
+    {{ flap_link("fin_sb",     np.pi / 2,   -r_fin_rad + fin_span/2,  0,                                "0 1 0", fin_span * 2, -flap_chord) }}
+    {{ flap_link("fin_bottom", 0,             0,                      -(r_fin_rad + fin_span/2) + fin_bottom_flap_z_corr, "0 0 1", fin_span, fin_bottom_flap_x_corr) }}
     
     {# GPS joint which includes GPS plugin #}
     <include>
@@ -647,6 +761,70 @@
           <zero_position_armed>0</zero_position_armed>
           <joint_control_type>velocity</joint_control_type>
           <joint_name>rotor_3_joint</joint_name>
+        </channel>
+
+        <!-- Flap joints: input_index 5..8 → PWM_MAIN_FUNC6..9 = 203..206
+             Limits match joint definition (±90° = ±1.5708 rad).
+             PID drives joint to commanded position smoothly. -->
+        <channel name="fin_top_flap">
+          <input_index>5</input_index>
+          <input_offset>0</input_offset>
+          <input_scaling>{{ np.pi / 2 }}</input_scaling>
+          <zero_position_disarmed>0</zero_position_disarmed>
+          <zero_position_armed>0</zero_position_armed>
+          <joint_control_type>position</joint_control_type>
+          <joint_control_pid>
+            <p>20</p><i>0</i><d>0</d>
+            <iMax>0</iMax><iMin>0</iMin>
+            <cmdMax>{{ np.pi / 2 }}</cmdMax>
+            <cmdMin>-{{ np.pi / 2 }}</cmdMin>
+          </joint_control_pid>
+          <joint_name>fin_top_flap_joint</joint_name>
+        </channel>
+        <channel name="fin_port_flap">
+          <input_index>6</input_index>
+          <input_offset>0</input_offset>
+          <input_scaling>{{ np.pi / 2 }}</input_scaling>
+          <zero_position_disarmed>0</zero_position_disarmed>
+          <zero_position_armed>0</zero_position_armed>
+          <joint_control_type>position</joint_control_type>
+          <joint_control_pid>
+            <p>20</p><i>0</i><d>0</d>
+            <iMax>0</iMax><iMin>0</iMin>
+            <cmdMax>{{ np.pi / 2 }}</cmdMax>
+            <cmdMin>-{{ np.pi / 2 }}</cmdMin>
+          </joint_control_pid>
+          <joint_name>fin_port_flap_joint</joint_name>
+        </channel>
+        <channel name="fin_sb_flap">
+          <input_index>7</input_index>
+          <input_offset>0</input_offset>
+          <input_scaling>{{ np.pi / 2 }}</input_scaling>
+          <zero_position_disarmed>0</zero_position_disarmed>
+          <zero_position_armed>0</zero_position_armed>
+          <joint_control_type>position</joint_control_type>
+          <joint_control_pid>
+            <p>20</p><i>0</i><d>0</d>
+            <iMax>0</iMax><iMin>0</iMin>
+            <cmdMax>{{ np.pi / 2 }}</cmdMax>
+            <cmdMin>-{{ np.pi / 2 }}</cmdMin>
+          </joint_control_pid>
+          <joint_name>fin_sb_flap_joint</joint_name>
+        </channel>
+        <channel name="fin_bottom_flap">
+          <input_index>8</input_index>
+          <input_offset>0</input_offset>
+          <input_scaling>{{ np.pi / 2 }}</input_scaling>
+          <zero_position_disarmed>0</zero_position_disarmed>
+          <zero_position_armed>0</zero_position_armed>
+          <joint_control_type>position</joint_control_type>
+          <joint_control_pid>
+            <p>20</p><i>0</i><d>0</d>
+            <iMax>0</iMax><iMin>0</iMin>
+            <cmdMax>{{ np.pi / 2 }}</cmdMax>
+            <cmdMin>-{{ np.pi / 2 }}</cmdMin>
+          </joint_control_pid>
+          <joint_name>fin_bottom_flap_joint</joint_name>
         </channel>
 
         
