@@ -349,7 +349,16 @@ void GazeboLTADynamicsPlugin::UpdateForcesAndMoments() {
   double h_angle = angle_fin3 + angle_fin4;
   double v_angle = angle_fin1 + angle_fin2;
   ignition::math::Vector3d force_fins = -q0*param_f_fnf_coeff_*ignition::math::Vector3d(0, v_angle, h_angle);
-  ignition::math::Vector3d moment_fins = q0*param_f_fnf_coeff_*ignition::math::Vector3d(param_dist_fin_quarter_chord_*(angle_fin1 + angle_fin4 - angle_fin2 - angle_fin3), param_dist_fin_x_*h_angle, -param_dist_fin_x_*v_angle);
+  // Fix A: yaw moment arm corrected from distFinCenter (from nose) to (distFinCenter - distCOV) (from CoV), sign flipped.
+  // Fix G: pitch moment arm corrected identically.
+  // Correct arm = param_dist_fin_x_ - param_cov_ = 3.884 - 2.22 = 1.664 m (fin is AFT of CoV)
+  const double fin_arm = param_dist_fin_x_ - param_cov_;
+  ignition::math::Vector3d moment_fins = q0*param_f_fnf_coeff_*ignition::math::Vector3d(param_dist_fin_quarter_chord_*(angle_fin1 + angle_fin4 - angle_fin2 - angle_fin3), fin_arm*h_angle, fin_arm*v_angle);
+
+  // Fix B: Explicit yaw rate damping — covers Vx=0 case where EPS guard zeros fin forces.
+  // Sized for ~10 s decay: C_damp = (Izz + m66) / tau = 14.0 / 10 = 1.5 N·m·s/rad
+  const double yaw_damp_coeff = 1.5;
+  ignition::math::Vector3d moment_yaw_damp = ignition::math::Vector3d(0, 0, -yaw_damp_coeff * angular_vel[2]);
 
   // Axial drag
   double angle_of_attack = 0;
@@ -360,7 +369,7 @@ void GazeboLTADynamicsPlugin::UpdateForcesAndMoments() {
 
   // Apply forces and torques at CoV
   link_->AddLinkForce(bouyancy_force_body + added_mass_force + force_visc + force_fins + force_axial_drag);
-  link_->AddRelativeTorque(added_mass_moment + moment_visc + moment_fins);
+  link_->AddRelativeTorque(added_mass_moment + moment_visc + moment_fins + moment_yaw_damp);
 }
 
 GZ_REGISTER_MODEL_PLUGIN(GazeboLTADynamicsPlugin);

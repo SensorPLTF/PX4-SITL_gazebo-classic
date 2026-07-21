@@ -152,18 +152,24 @@
 {%- set gas_izz = (1/5)*gas_mass*((hull_max_diameter/2)**2 + (hull_length/2)**2) -%}
 
 {# gondola #}
-{%- set gondola_ixx = (1/12)*gondola_mass*(gondola_height**2 + gondola_width**2) + gondola_mass*r_gon_x**2 -%}
-{%- set gondola_iyy = (1/12)*gondola_mass*(gondola_height**2 + gondola_length**2) + gondola_mass*r_gon_y**2 -%}
-{%- set gondola_izz = (1/12)*gondola_mass*(gondola_width**2 + gondola_length**2) + gondola_mass*r_gon_z**2 -%}
+{# Fix H: correct parallel-axis — use perpendicular distance from each rotation axis #}
+{# Gondola at (r_gon_x, 0, -r_gon_z):  Ixx uses ry²+rz²,  Iyy uses rx²+rz²,  Izz uses rx²+ry² #}
+{%- set gondola_ixx = (1/12)*gondola_mass*(gondola_height**2 + gondola_width**2)  + gondola_mass*(r_gon_y**2 + r_gon_z**2) -%}
+{%- set gondola_iyy = (1/12)*gondola_mass*(gondola_height**2 + gondola_length**2) + gondola_mass*(r_gon_x**2 + r_gon_z**2) -%}
+{%- set gondola_izz = (1/12)*gondola_mass*(gondola_width**2  + gondola_length**2) + gondola_mass*(r_gon_x**2 + r_gon_y**2) -%}
 
 {# payload #}
-{%- set payload_ixx = pl_mass*r_pl_x**2 -%}
-{%- set payload_iyy = 0 -%}
-{%- set payload_izz = pl_mass*r_pl_z**2 -%}
+{# Fix H: correct parallel-axis — payload at (r_pl_x, 0, -r_pl_z): #}
+{%- set payload_ixx = pl_mass*(r_pl_z**2) -%}                          {# ry²+rz² = 0+rz² #}
+{%- set payload_iyy = pl_mass*(r_pl_x**2 + r_pl_z**2) -%}             {# rx²+rz² #}
+{%- set payload_izz = pl_mass*(r_pl_x**2) -%}                          {# rx²+ry² = rx²+0 #}
 
 {# fins #}
-{%- set fins_ixx = 4*((1/12)*fin_mass*(fin_span**2) + fin_mass*r_fin_x**2) -%}
-{%- set fins_iyy = 2*((1/12)*fin_mass*fin_root_chord**2 + fin_mass*r_fin_center_rad**2 + (1/12)*fin_mass*(fin_root_chord**2 + fin_span**2) + fin_mass*(r_fin_center_rad**2 + 0*r_fin_x**2)) -%}
+{# Fix H: correct parallel-axis for fins.  4 fins: top/bottom (span in Z) and port/sb (span in Y). #}
+{# Ixx: all fins have d_perp_x = r_fin_center_rad (they all sit at ±r_fin_center_rad from X-axis) #}
+{%- set fins_ixx = 4*((1/12)*fin_mass*(fin_span**2) + fin_mass*r_fin_center_rad**2) -%}
+{# Iyy: top/bottom use rx²+rz² = r_fin_x²+r_fc²; port/sb use rx²+0 = r_fin_x² (span in Y, rz=0) #}
+{%- set fins_iyy = 2*((1/12)*fin_mass*fin_root_chord**2 + fin_mass*r_fin_x**2 + (1/12)*fin_mass*(fin_root_chord**2 + fin_span**2) + fin_mass*(r_fin_center_rad**2 + r_fin_x**2)) -%}
 {%- set fins_izz = fins_iyy -%}
 
 {# total mass moment of inertia #}
@@ -376,7 +382,7 @@
         <surface>
           <contact>
             <ode>
-              <kp>1e6</kp>
+              <kp>1e4</kp>  <!-- Fix I: reduced from 1e6 — softer contact reduces ODE spawn impulse noise -->
               <kd>100</kd>
               <max_vel>0.1</max_vel>
               <min_depth>0.001</min_depth>
@@ -526,15 +532,13 @@
       <airDensity>{{ air_density }}</airDensity>
       <m11>0.34094584</m11>
       <m22>6.89645916</m22>
-      <!--<m26>0.8003539</m26>-->  <!-- Munk coupling: disabled; real fins provide restoring moment not captured in sim -->
-      <m26>0.0</m26>
+      <m26>0.8003539</m26>  <!-- Fix J: restored — sway-yaw Coriolis damping in forward flight; consistent with m35/m53 -->
       <m33>6.89645916</m33>
       <m35>-0.8003539</m35>
       <m44>0.03909877</m44>
       <m53>-0.8003539</m53>
       <m55>4.51385307</m55>
-      <!--<m62>0.8003539</m62>-->  <!-- Munk coupling: disabled; real fins provide restoring moment not captured in sim -->
-      <m62>0.0</m62>
+      <m62>0.8003539</m62>  <!-- Fix J: restored — yaw moment from sway acceleration; symmetric with m26 -->
       <m66>4.51385307</m66>
       <distCOV>{{ hull_cov }}</distCOV>
       <distPotentialFlow>3.758</distPotentialFlow>
