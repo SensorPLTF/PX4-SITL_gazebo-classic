@@ -214,7 +214,9 @@ void GazeboLTADynamicsPlugin::Load(physics::ModelPtr _model, sdf::ElementPtr _sd
   updateConnection_ = event::Events::ConnectWorldUpdateBegin(boost::bind(&GazeboLTADynamicsPlugin::OnUpdate, this, _1));
 
   // Subscribe to wind topic.
-  wind_sub_ = node_handle_->Subscribe<physics_msgs::msgs::Wind>("~/" + model_->GetName() + wind_sub_topic_, &GazeboLTADynamicsPlugin::WindVelocityCallback, this);
+  //wind_sub_ = node_handle_->Subscribe<physics_msgs::msgs::Wind>("~/" + model_->GetName() + wind_sub_topic_, &GazeboLTADynamicsPlugin::WindVelocityCallback, this);
+  wind_sub_ = node_handle_->Subscribe<physics_msgs::msgs::Wind>("~/"  + wind_sub_topic_, &GazeboLTADynamicsPlugin::WindVelocityCallback, this);
+
 }
 
 // This gets called by the world update start event.
